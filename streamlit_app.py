@@ -113,7 +113,7 @@ def calculate_risk_metrics(stock_prices, benchmark_prices):
     }).dropna()
     
     if len(aligned_returns) < 2:
-        return None, None, None, None, None, "Insufficient data for calculations"
+        return None, None, None, None, None, None, None, "Insufficient data for calculations"
     
     covariance = aligned_returns['stock'].cov(aligned_returns['benchmark'])
     benchmark_variance = aligned_returns['benchmark'].var()
@@ -129,7 +129,7 @@ def calculate_risk_metrics(stock_prices, benchmark_prices):
     peak_date = running_max.loc[:max_drawdown_idx].idxmax()
     trough_date = max_drawdown_idx
     
-    return volatility, beta, max_drawdown, peak_date, trough_date, None
+    return volatility, beta, max_drawdown, peak_date, trough_date, stock_returns, benchmark_returns, aligned_returns, None
 
 def calculate_tax_simulation(shares, current_price, cost_basis, tax_rate):
     """Calculate tax simulation results."""
@@ -145,6 +145,75 @@ def calculate_tax_simulation(shares, current_price, cost_basis, tax_rate):
         'gain': gain,
         'tax_estimate': tax_estimate,
         'after_tax_proceeds': after_tax_proceeds
+    }
+
+def calculate_additional_metrics(stock_prices, benchmark_prices, stock_returns, benchmark_returns, aligned_returns, volatility, beta, years):
+    """Calculate additional metrics: correlation, Sharpe ratio, returns, etc."""
+    window = 60
+    
+    # Rolling correlation (60-day window)
+    rolling_correlation = aligned_returns['stock'].rolling(window=window).corr(aligned_returns['benchmark'])
+    
+    # Rolling volatility (60-day window)
+    rolling_volatility = stock_returns.rolling(window=window).std() * np.sqrt(252)
+    
+    # Rolling beta (60-day window)
+    rolling_beta = pd.Series(index=aligned_returns.index, dtype=float)
+    for i in range(window, len(aligned_returns) + 1):
+        window_data = aligned_returns.iloc[i-window:i]
+        if len(window_data) >= window:
+            cov = window_data['stock'].cov(window_data['benchmark'])
+            var = window_data['benchmark'].var()
+            if var != 0 and not pd.isna(cov):
+                rolling_beta.iloc[i-1] = cov / var
+    
+    # Overall correlation
+    overall_correlation = aligned_returns['stock'].corr(aligned_returns['benchmark'])
+    
+    # Recent correlation (30-day)
+    recent_correlation = aligned_returns.tail(30)['stock'].corr(aligned_returns.tail(30)['benchmark'])
+    
+    # Sharpe Ratio (assuming risk-free rate of 0)
+    mean_return = stock_returns.mean() * 252  # Annualized mean return
+    sharpe_ratio = mean_return / volatility if volatility > 0 else 0
+    
+    # Return metrics
+    total_return = (stock_prices.iloc[-1] / stock_prices.iloc[0] - 1) * 100
+    benchmark_return = (benchmark_prices.iloc[-1] / benchmark_prices.iloc[0] - 1) * 100
+    excess_return = total_return - benchmark_return
+    avg_daily_return = stock_returns.mean() * 100
+    
+    # Trading days analysis
+    positive_days = (stock_returns > 0).sum()
+    negative_days = (stock_returns < 0).sum()
+    win_rate = (positive_days / len(stock_returns)) * 100
+    
+    # Extreme moves
+    best_day_return = stock_returns.max() * 100
+    worst_day_return = stock_returns.min() * 100
+    best_day_date = stock_returns.idxmax()
+    worst_day_date = stock_returns.idxmin()
+    
+    return {
+        'rolling_correlation': rolling_correlation,
+        'rolling_volatility': rolling_volatility,
+        'rolling_beta': rolling_beta,
+        'overall_correlation': overall_correlation,
+        'recent_correlation': recent_correlation,
+        'sharpe_ratio': sharpe_ratio,
+        'mean_return': mean_return,
+        'total_return': total_return,
+        'benchmark_return': benchmark_return,
+        'excess_return': excess_return,
+        'avg_daily_return': avg_daily_return,
+        'positive_days': positive_days,
+        'negative_days': negative_days,
+        'win_rate': win_rate,
+        'best_day_return': best_day_return,
+        'worst_day_return': worst_day_return,
+        'best_day_date': best_day_date,
+        'worst_day_date': worst_day_date,
+        'window': window
     }
 
 def create_price_chart(stock_prices, benchmark_prices, ticker, benchmark):
@@ -171,6 +240,49 @@ def create_price_chart(stock_prices, benchmark_prices, ticker, benchmark):
                  fontsize=14, fontweight='bold')
     ax.legend(fontsize=11)
     ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    return fig
+
+def create_rolling_metrics_chart(rolling_correlation, rolling_volatility, rolling_beta, 
+                                  overall_correlation, volatility, beta, ticker, benchmark, window):
+    """Create rolling correlation and risk metrics visualization."""
+    fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
+    
+    # Plot 1: Rolling Correlation
+    axes[0].plot(rolling_correlation.index, rolling_correlation.values, 
+                 label=f'{ticker} vs {benchmark} Rolling Correlation ({window}-day)', 
+                 linewidth=2, alpha=0.8, color='#2E86AB')
+    axes[0].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+    axes[0].axhline(y=overall_correlation, color='r', linestyle='--', alpha=0.5, 
+                    label=f'Overall Correlation: {overall_correlation:.3f}')
+    axes[0].set_ylabel('Correlation', fontsize=11)
+    axes[0].set_title(f'{ticker} - Rolling Correlation & Risk Metrics ({window}-Day Window)', 
+                      fontsize=14, fontweight='bold')
+    axes[0].legend(fontsize=9)
+    axes[0].grid(True, alpha=0.3)
+    axes[0].set_ylim([-1, 1])
+    
+    # Plot 2: Rolling Volatility
+    axes[1].plot(rolling_volatility.index, rolling_volatility.values * 100, 
+                 label=f'{ticker} Rolling Volatility ({window}-day)', 
+                 linewidth=2, alpha=0.8, color='#A23B72')
+    axes[1].axhline(y=volatility*100, color='r', linestyle='--', alpha=0.5, 
+                    label=f'Overall Volatility: {volatility*100:.2f}%')
+    axes[1].set_ylabel('Volatility (%)', fontsize=11)
+    axes[1].legend(fontsize=9)
+    axes[1].grid(True, alpha=0.3)
+    
+    # Plot 3: Rolling Beta
+    axes[2].plot(rolling_beta.index, rolling_beta.values, 
+                 label=f'{ticker} Rolling Beta vs {benchmark} ({window}-day)', 
+                 linewidth=2, alpha=0.8, color='#F18F01')
+    axes[2].axhline(y=1.0, color='gray', linestyle='--', alpha=0.5, label='Beta = 1.0 (Market)')
+    axes[2].axhline(y=beta, color='r', linestyle='--', alpha=0.5, label=f'Overall Beta: {beta:.2f}')
+    axes[2].set_xlabel('Date', fontsize=12)
+    axes[2].set_ylabel('Beta', fontsize=11)
+    axes[2].legend(fontsize=9)
+    axes[2].grid(True, alpha=0.3)
     
     plt.tight_layout()
     return fig
@@ -278,13 +390,20 @@ def main():
         
         # Calculate risk metrics
         with st.spinner("Calculating risk metrics..."):
-            volatility, beta, max_drawdown, peak_date, trough_date, calc_error = calculate_risk_metrics(
+            volatility, beta, max_drawdown, peak_date, trough_date, stock_returns, benchmark_returns, aligned_returns, calc_error = calculate_risk_metrics(
                 stock_prices, benchmark_prices
             )
         
         if calc_error:
             st.error(f"❌ {calc_error}")
             return
+        
+        # Calculate additional metrics
+        with st.spinner("Calculating additional metrics..."):
+            additional_metrics = calculate_additional_metrics(
+                stock_prices, benchmark_prices, stock_returns, benchmark_returns, 
+                aligned_returns, volatility, beta, YEARS_OF_DATA
+            )
         
         # Calculate tax simulation
         tax_results = calculate_tax_simulation(shares, current_price, cost_basis, tax_rate)
@@ -388,6 +507,95 @@ def main():
             st.pyplot(fig)
         
         st.caption(f"Chart shows normalized price performance (starting at 100) for {ticker} vs {benchmark} over the last {YEARS_OF_DATA} years")
+        
+        st.divider()
+        
+        # Rolling Correlation & Risk Metrics Section
+        st.header("📊 Rolling Correlation & Risk Metrics")
+        
+        with st.spinner("Generating rolling metrics chart..."):
+            fig_rolling = create_rolling_metrics_chart(
+                additional_metrics['rolling_correlation'],
+                additional_metrics['rolling_volatility'],
+                additional_metrics['rolling_beta'],
+                additional_metrics['overall_correlation'],
+                volatility,
+                beta,
+                ticker,
+                benchmark,
+                additional_metrics['window']
+            )
+            st.pyplot(fig_rolling)
+        
+        st.caption(f"Rolling metrics calculated using a {additional_metrics['window']}-day window. Reference lines show overall metrics.")
+        
+        st.divider()
+        
+        # Additional Statistics Section
+        st.header("📈 Additional Statistics & Insights")
+        
+        # Return Metrics
+        st.subheader("📈 Return Metrics")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric(f"{ticker} Total Return", f"{additional_metrics['total_return']:.2f}%")
+        with col2:
+            st.metric(f"{benchmark} Total Return", f"{additional_metrics['benchmark_return']:.2f}%")
+        with col3:
+            st.metric("Excess Return", f"{additional_metrics['excess_return']:.2f}%")
+        with col4:
+            st.metric("Sharpe Ratio", f"{additional_metrics['sharpe_ratio']:.2f}")
+        
+        # Correlation Analysis
+        st.subheader("🔗 Correlation Analysis")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Overall Correlation", f"{additional_metrics['overall_correlation']:.3f}")
+        with col2:
+            st.metric("Recent Correlation (30-day)", f"{additional_metrics['recent_correlation']:.3f}")
+        with col3:
+            corr_interp = "Highly correlated with market" if additional_metrics['overall_correlation'] > 0.7 else \
+                          "Moderately correlated with market" if additional_metrics['overall_correlation'] > 0.4 else \
+                          "Low positive correlation with market" if additional_metrics['overall_correlation'] > 0 else \
+                          "Negative correlation with market"
+            st.metric("Interpretation", corr_interp)
+        
+        # Trading Days Analysis
+        st.subheader("📊 Trading Days Analysis")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Trading Days", f"{len(stock_returns):,}")
+        with col2:
+            st.metric("Positive Days", f"{additional_metrics['positive_days']:,} ({additional_metrics['win_rate']:.1f}%)")
+        with col3:
+            st.metric("Negative Days", f"{additional_metrics['negative_days']:,} ({100-additional_metrics['win_rate']:.1f}%)")
+        
+        # Extreme Moves
+        st.subheader("📉 Extreme Moves")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric(
+                "Best Day",
+                f"{additional_metrics['best_day_return']:.2f}%",
+                delta=f"on {additional_metrics['best_day_date'].strftime('%Y-%m-%d')}"
+            )
+        with col2:
+            st.metric(
+                "Worst Day",
+                f"{additional_metrics['worst_day_return']:.2f}%",
+                delta=f"on {additional_metrics['worst_day_date'].strftime('%Y-%m-%d')}",
+                delta_color="inverse"
+            )
+        
+        # Additional Risk-Adjusted Metrics
+        st.subheader("📊 Additional Risk Metrics")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Annualized Mean Return", f"{additional_metrics['mean_return']*100:.2f}%")
+        with col2:
+            st.metric("Average Daily Return", f"{additional_metrics['avg_daily_return']:.3f}%")
+        with col3:
+            st.metric("Volatility", f"{volatility*100:.2f}%")
         
         st.divider()
         
