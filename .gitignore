@@ -1,0 +1,33 @@
+# Cache directory
+cache/
+*.pkl
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Output files
+*_vs_*_chart.png
+*_rolling_risk_metrics.png
+
+# Streamlit
+.streamlit/secrets.toml
+
