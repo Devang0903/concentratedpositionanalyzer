@@ -23,7 +23,6 @@ st.set_page_config(
 
 # Configuration
 YEARS_OF_DATA = 5
-BENCHMARK = 'SPY'
 
 # Custom CSS for better styling
 st.markdown("""
@@ -50,6 +49,31 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+def validate_ticker(ticker):
+    """Validate that a ticker exists and has data available."""
+    if not ticker:
+        return False, "Ticker cannot be empty"
+    
+    # Basic format validation (alphanumeric, typically 1-5 characters, may include dots/dashes)
+    if not ticker.replace('.', '').replace('-', '').isalnum():
+        return False, f"Invalid ticker format: {ticker}. Tickers should be alphanumeric (e.g., AAPL, BRK.B, SPY)"
+    
+    # Try to fetch 1 day of data to verify ticker exists
+    try:
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="1d")
+        if hist.empty:
+            return False, f"Ticker '{ticker}' not found or has no trading data. Please check the ticker symbol."
+        return True, None
+    except Exception as e:
+        error_msg = str(e).lower()
+        if 'not found' in error_msg or 'invalid' in error_msg or 'no data' in error_msg:
+            return False, f"Ticker '{ticker}' not found. Please check the ticker symbol and try again."
+        elif 'timeout' in error_msg or 'connection' in error_msg or 'network' in error_msg:
+            return False, f"Connection error while validating ticker '{ticker}'. Please check your internet connection."
+        else:
+            return False, f"Error validating ticker '{ticker}': {str(e)}"
+
 def fetch_data(ticker, benchmark, years):
     """Fetch historical data for ticker and benchmark."""
     end_date = datetime.now()
@@ -64,7 +88,10 @@ def fetch_data(ticker, benchmark, years):
         benchmark_data = bench.history(start=start_date, end=end_date)
         
         if stock_data.empty or benchmark_data.empty:
-            return None, None, "No data found for one or both tickers."
+            if stock_data.empty:
+                return None, None, f"No data found for ticker '{ticker}'. Please verify the ticker symbol."
+            else:
+                return None, None, f"No data found for benchmark '{benchmark}'. Please try a different benchmark."
         
         return stock_data, benchmark_data, None
     except Exception as e:
@@ -173,6 +200,13 @@ def main():
             help="Enter the stock or ETF ticker symbol (e.g., TSLA, AAPL, MSFT)"
         ).upper().strip()
         
+        benchmark = st.selectbox(
+            "Benchmark",
+            options=["SPY", "QQQ", "DIA", "IWM", "VTI", "VOO", "VEA", "VWO", "AGG", "BND"],
+            index=0,
+            help="Select a benchmark ETF for comparison (SPY = S&P 500, QQQ = Nasdaq 100, etc.)"
+        )
+        
         shares = st.number_input(
             "Number of Shares to Sell",
             min_value=0.0,
@@ -207,9 +241,25 @@ def main():
             st.error("⚠️ Please enter a stock ticker.")
             return
         
+        # Validate ticker before fetching data
+        with st.spinner(f"Validating ticker {ticker}..."):
+            is_valid, validation_error = validate_ticker(ticker)
+            if not is_valid:
+                st.error(f"❌ {validation_error}")
+                st.info("💡 **Tip**: Make sure you're using the correct ticker symbol (e.g., AAPL for Apple, TSLA for Tesla). Some tickers may include dots (e.g., BRK.B) or dashes.")
+                return
+        
+        # Validate benchmark
+        with st.spinner(f"Validating benchmark {benchmark}..."):
+            is_valid, validation_error = validate_ticker(benchmark)
+            if not is_valid:
+                st.error(f"❌ Benchmark validation failed: {validation_error}")
+                st.info("💡 **Tip**: Please select a different benchmark from the dropdown.")
+                return
+        
         # Show loading spinner
-        with st.spinner(f"Fetching data for {ticker} and {BENCHMARK}..."):
-            stock_data, benchmark_data, error = fetch_data(ticker, BENCHMARK, YEARS_OF_DATA)
+        with st.spinner(f"Fetching data for {ticker} and {benchmark}..."):
+            stock_data, benchmark_data, error = fetch_data(ticker, benchmark, YEARS_OF_DATA)
         
         if error:
             st.error(f"❌ {error}")
@@ -267,7 +317,7 @@ def main():
         
         with col2:
             st.metric(
-                "Beta vs. SPY",
+                f"Beta vs. {benchmark}",
                 f"{beta:.2f}",
                 help="Stock's sensitivity to market movements (1.0 = moves with market)"
             )
@@ -334,10 +384,10 @@ def main():
         st.header("📊 Historical Price Comparison")
         
         with st.spinner("Generating chart..."):
-            fig = create_price_chart(stock_prices, benchmark_prices, ticker, BENCHMARK)
+            fig = create_price_chart(stock_prices, benchmark_prices, ticker, benchmark)
             st.pyplot(fig)
         
-        st.caption(f"Chart shows normalized price performance (starting at 100) for {ticker} vs {BENCHMARK} over the last {YEARS_OF_DATA} years")
+        st.caption(f"Chart shows normalized price performance (starting at 100) for {ticker} vs {benchmark} over the last {YEARS_OF_DATA} years")
         
         st.divider()
         
@@ -368,7 +418,7 @@ CURRENT PRICE: ${current_price:.2f}
 RISK METRICS
 {'-'*70}
 Volatility (Annualized):     {volatility*100:.2f}%
-Beta vs. SPY:                {beta:.2f}
+Beta vs. {benchmark}:                {beta:.2f}
 Maximum Drawdown:            {max_drawdown*100:.2f}%
 Max Drawdown Period:         {peak_date.strftime('%Y-%m-%d')} to {trough_date.strftime('%Y-%m-%d')}
 
