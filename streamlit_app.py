@@ -11,7 +11,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import warnings
-import requests
 warnings.filterwarnings('ignore')
 
 # Page configuration
@@ -57,12 +56,11 @@ def fetch_data(ticker, benchmark, years):
     start_date = end_date - timedelta(days=years * 365)
     
     try:
-        # Use session for better connection handling (like analyzer.py)
-        session = requests.Session()
-        stock = yf.Ticker(ticker, session=session)
+        # Let yfinance handle session management automatically
+        stock = yf.Ticker(ticker)
         stock_data = stock.history(start=start_date, end=end_date)
         
-        bench = yf.Ticker(benchmark, session=session)
+        bench = yf.Ticker(benchmark)
         benchmark_data = bench.history(start=start_date, end=end_date)
         
         if stock_data.empty or benchmark_data.empty:
